@@ -3,10 +3,11 @@
 Reorganize WV dataset into training-ready structure with deterministic renaming.
 
 Output structure:
-  dataset/
+  dataset_arranged/
     authentic/
     tampered/{copy_move,face_morph,face_replace,combined,inpaint_rewrite,crop_replace}/
     masks/{copy_move,face_morph,face_replace,combined,inpaint_rewrite,crop_replace}/
+  manifests/
 
 For each image, creates a JSON sidecar with merged metadata and new paths.
 Regenerates stratified train/val/test manifests (80/10/10 by default).
@@ -362,19 +363,20 @@ def validate_records(records: list[dict[str, Any]]) -> None:
 
 
 def ensure_output_dirs(output_dir: Path) -> None:
-    (output_dir / "authentic").mkdir(parents=True, exist_ok=True)
-    tampered_root = output_dir / "tampered"
-    masks_root = output_dir / "masks"
-    for fraud_type in ["copy_move", "face_morph", "face_replace", "combined", "inpaint_rewrite", "crop_replace"]:
-        (tampered_root / fraud_type).mkdir(parents=True, exist_ok=True)
-        (masks_root / fraud_type).mkdir(parents=True, exist_ok=True)
+    dirs = (
+        [output_dir / "authentic"]
+        + [output_dir / "tampered" / ft for ft in ["copy_move", "face_morph", "face_replace", "combined", "inpaint_rewrite", "crop_replace"]]
+        + [output_dir / "masks" / ft for ft in ["copy_move", "face_morph", "face_replace", "combined", "inpaint_rewrite", "crop_replace"]]
+    )
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
 
 
 def main() -> None:
     args = parse_args()
     base_dir = args.base_dir.resolve()
-    output_dir = (args.output_dir or (base_dir / "dataset")).resolve()
-    manifests_dir = (args.manifests_dir or (base_dir / "manifests")).resolve()
+    output_dir = (args.output_dir or Path("dataset_arranged")).resolve()
+    manifests_dir = (args.manifests_dir or (output_dir.parent / "manifests")).resolve()
 
     ratio = tuple(args.split_ratio)
     if abs(sum(ratio) - 1.0) > 1e-8:
