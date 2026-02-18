@@ -10,4 +10,9 @@ dataset/
 venv/
 venv
 .ipynb_checkpoints/
+model/.ipynb_checkpoints/
 .vscode/
+__pycache__/
+*.pyc
+dataset_arranged/
+manifests/
