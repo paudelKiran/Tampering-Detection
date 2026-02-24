@@ -26,8 +26,8 @@ def block_dct(channel):
     
     channel = channel[:, :H - H  % 8, : W - W % 8] #cropping the image so that we can turn them to  8*8 bolcks and the  leftover block wont affect the model 
     
-    patches = tf.extract_patches(
-    image = tf.expand_dims(patches , -1),
+    patches = tf.image.extract_patches(
+    image = tf.expand_dims(channel , -1),
     sizes = [1,8,8,1],
     strides = [1,8,8,1],
     rates = [1,1,1,1],
@@ -57,7 +57,7 @@ def binary_volume_encoding(dct_volume, thresholds = (-20,-10,0,10,20)):
     binary_maps = []
     for t in thresholds:
         binary_maps.append(tf.cast(dct_volume > t, tf.float32))
-        return tf.concat(binary_maps, axis = 1)     #output =  (B, H/8, W/8, 320)
+    return tf.concat(binary_maps, axis = -1)     #output =  (B, H/8, W/8, 320)
     
     
     
