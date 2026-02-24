@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HRNet-W18 Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --stem: #4ade80;
+    --branch1: #60a5fa;
+    --branch2: #f472b6;
+    --branch3: #fb923c;
+    --branch4: #a78bfa;
+    --fuse: #facc15;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #4ade80;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    overflow-x: auto;
+  }
+
+  header {
+    padding: 2rem 3rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 2rem;
+    letter-spacing: -1px;
+    color: #fff;
+  }
+
+  h1 span { color: var(--accent); }
+
+  .subtitle {
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .legend {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    font-size: 0.65rem;
+    color: var(--muted);
+    padding: 1rem 3rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .canvas-wrap {
+    padding: 2rem 3rem 3rem;
+    overflow-x: auto;
+  }
+
+  svg {
+    display: block;
+    min-width: 1100px;
+  }
+
+  /* Node styles */
+  .node rect {
+    rx: 6;
+    ry: 6;
+  }
+
+  .node text {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    fill: #fff;
+    dominant-baseline: middle;
+    text-anchor: middle;
+  }
+
+  .node text.small {
+    font-size: 8px;
+    fill: rgba(255,255,255,0.6);
+  }
+
+  .arrow {
+    fill: none;
+    stroke-width: 1.5;
+    marker-end: url(#arrow);
+  }
+
+  .connector {
+    fill: none;
+    stroke-width: 1;
+    stroke-dasharray: 4,3;
+    opacity: 0.5;
+  }
+
+  .stage-label {
+    font-family: 'Syne', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    fill: rgba(255,255,255,0.3);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .branch-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    fill: rgba(255,255,255,0.25);
+  }
+
+  .glow {
+    filter: url(#glow);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>HRNet<span>-W18</span> Backbone</h1>
+    <div class="subtitle">High-Resolution Network · Multi-Scale Feature Fusion</div>
+  </div>
+  <div style="text-align:right; font-size:0.65rem; color:var(--muted); line-height:1.8">
+    <div>filters: 18 / 36 / 72 / 144</div>
+    <div>outputs: 4 multi-scale feature maps</div>
+    <div>blocks per stage: 2 residual blocks</div>
+  </div>
+</header>
+
+<div class="legend">
+  <div class="legend-item"><div class="dot" style="background:#4ade80"></div> Stem / Conv+BN+ReLU</div>
+  <div class="legend-item"><div class="dot" style="background:#60a5fa"></div> Branch 1 (W=18)</div>
+  <div class="legend-item"><div class="dot" style="background:#f472b6"></div> Branch 2 (W=36)</div>
+  <div class="legend-item"><div class="dot" style="background:#fb923c"></div> Branch 3 (W=72)</div>
+  <div class="legend-item"><div class="dot" style="background:#a78bfa"></div> Branch 4 (W=144)</div>
+  <div class="legend-item"><div class="dot" style="background:#facc15"></div> Fusion (Add + ReLU)</div>
+  <div class="legend-item"><div class="dot" style="background:#94a3b8"></div> Residual Block</div>
+</div>
+
+<div class="canvas-wrap">
+<svg viewBox="0 0 1160 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,0.35)"/>
+    </marker>
+    <marker id="arrow-b1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrow-b2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#f472b6"/>
+    </marker>
+    <marker id="arrow-b3" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#fb923c"/>
+    </marker>
+    <marker id="arrow-b4" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#a78bfa"/>
+    </marker>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <!-- Grid lines -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- Background grid -->
+  <rect width="1160" height="560" fill="url(#grid)"/>
+
+  <!-- ======= STAGE LABELS ======= -->
+  <text x="30" y="18" class="stage-label">STEM</text>
+  <text x="145" y="18" class="stage-label">STAGE 1</text>
+  <text x="345" y="18" class="stage-label">TRANSITION</text>
+  <text x="500" y="18" class="stage-label">STAGE 2</text>
+  <text x="640" y="18" class="stage-label">STAGE 3</text>
+  <text x="800" y="18" class="stage-label">STAGE 4</text>
+  <text x="1000" y="18" class="stage-label">OUTPUT</text>
+
+  <!-- ======= BRANCH LABELS ======= -->
+  <text x="8" y="120" class="branch-label">Branch 1</text>
+  <text x="8" y="240" class="branch-label">Branch 2</text>
+  <text x="8" y="360" class="branch-label">Branch 3</text>
+  <text x="8" y="460" class="branch-label">Branch 4</text>
+
+  <!-- ======= STEM ======= -->
+  <!-- Input -->
+  <g class="node">
+    <rect x="18" y="100" width="70" height="38" fill="#1a2a1a" stroke="#4ade80" stroke-width="1.5"/>
+    <text x="53" y="115">Input</text>
+    <text x="53" y="128" class="small">H×W×3</text>
+  </g>
+  <!-- Stem Conv -->
+  <g class="node">
+    <rect x="102" y="100" width="70" height="38" fill="#1a2a1a" stroke="#4ade80" stroke-width="1.5"/>
+    <text x="137" y="115">Conv 3×3</text>
+    <text x="137" y="128" class="small">64ch, /1</text>
+  </g>
+  <line x1="88" y1="119" x2="101" y2="119" class="arrow" stroke="rgba(255,255,255,0.3)" marker-end="url(#arrow)"/>
+
+  <!-- Stage 1: 4 Residual Blocks -->
+  <g class="node">
+    <rect x="188" y="100" width="80" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="228" y="115">Res ×4</text>
+    <text x="228" y="128" class="small">64ch</text>
+  </g>
+  <line x1="172" y1="119" x2="187" y2="119" class="arrow" stroke="rgba(255,255,255,0.3)" marker-end="url(#arrow)"/>
+
+  <!-- ======= TRANSITION to Stage 2 ======= -->
+  <!-- Transition 1: x1 (18ch) -->
+  <g class="node">
+    <rect x="285" y="100" width="75" height="38" fill="#0d1f30" stroke="#60a5fa" stroke-width="1.5"/>
+    <text x="322" y="115">Conv 3×3</text>
+    <text x="322" y="128" class="small">18ch, /1</text>
+  </g>
+  <!-- Transition 2: x2 (36ch) -->
+  <g class="node">
+    <rect x="285" y="210" width="75" height="38" fill="#2a1025" stroke="#f472b6" stroke-width="1.5"/>
+    <text x="322" y="225">Conv 3×3</text>
+    <text x="322" y="238" class="small">36ch, /2</text>
+  </g>
+
+  <!-- Arrows from Stage1 to transitions -->
+  <line x1="268" y1="119" x2="284" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <path d="M268,119 Q275,119 275,229 L284,229" fill="none" stroke="#f472b6" stroke-width="1.5" marker-end="url(#arrow-b2)"/>
+
+  <!-- ======= STAGE 2 ======= -->
+  <!-- Branch 1 residual blocks -->
+  <g class="node">
+    <rect x="375" y="100" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="414" y="115">Res ×2</text>
+    <text x="414" y="128" class="small">18ch</text>
+  </g>
+  <!-- Branch 2 residual blocks -->
+  <g class="node">
+    <rect x="375" y="210" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="414" y="225">Res ×2</text>
+    <text x="414" y="238" class="small">36ch</text>
+  </g>
+
+  <line x1="360" y1="119" x2="374" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <line x1="360" y1="229" x2="374" y2="229" class="arrow" stroke="#f472b6" marker-end="url(#arrow-b2)"/>
+
+  <!-- Stage 2 Fusion boxes -->
+  <g class="node">
+    <rect x="467" y="100" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="1.5"/>
+    <text x="501" y="115">Fuse+Add</text>
+    <text x="501" y="128" class="small">18ch</text>
+  </g>
+  <g class="node">
+    <rect x="467" y="210" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="1.5"/>
+    <text x="501" y="225">Fuse+Add</text>
+    <text x="501" y="238" class="small">36ch</text>
+  </g>
+
+  <line x1="453" y1="119" x2="466" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <line x1="453" y1="229" x2="466" y2="229" class="arrow" stroke="#f472b6" marker-end="url(#arrow-b2)"/>
+
+  <!-- Cross connections (fused dashed) -->
+  <path d="M453,229 L459,229 L459,148 L466,148" fill="none" stroke="#60a5fa" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+  <path d="M453,119 L461,119 L461,200 L466,200" fill="none" stroke="#f472b6" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+
+  <!-- ======= TRANSITION to Stage 3 ======= -->
+  <g class="node">
+    <rect x="550" y="330" width="72" height="38" fill="#2a1a0a" stroke="#fb923c" stroke-width="1.5"/>
+    <text x="586" y="345">Conv 3×3</text>
+    <text x="586" y="358" class="small">72ch, /2</text>
+  </g>
+  <!-- Arrow from fuse-b2 down to transition3 -->
+  <path d="M501,248 L501,280 L535,280 L535,349 L549,349" fill="none" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrow-b3)"/>
+
+  <!-- ======= STAGE 3 ======= -->
+  <!-- Branch 1 -->
+  <g class="node">
+    <rect x="637" y="100" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="676" y="115">Res ×2</text>
+    <text x="676" y="128" class="small">18ch</text>
+  </g>
+  <!-- Branch 2 -->
+  <g class="node">
+    <rect x="637" y="210" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="676" y="225">Res ×2</text>
+    <text x="676" y="238" class="small">36ch</text>
+  </g>
+  <!-- Branch 3 -->
+  <g class="node">
+    <rect x="637" y="330" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="676" y="345">Res ×2</text>
+    <text x="676" y="358" class="small">72ch</text>
+  </g>
+
+  <line x1="535" y1="119" x2="636" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <line x1="535" y1="229" x2="636" y2="229" class="arrow" stroke="#f472b6" marker-end="url(#arrow-b2)"/>
+  <line x1="622" y1="349" x2="636" y2="349" class="arrow" stroke="#fb923c" marker-end="url(#arrow-b3)"/>
+
+  <!-- Stage 3 Fusion -->
+  <g class="node">
+    <rect x="728" y="100" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="1.5"/>
+    <text x="762" y="115">Fuse+Add</text>
+    <text x="762" y="128" class="small">18ch</text>
+  </g>
+  <g class="node">
+    <rect x="728" y="210" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="1.5"/>
+    <text x="762" y="225">Fuse+Add</text>
+    <text x="762" y="238" class="small">36ch</text>
+  </g>
+  <g class="node">
+    <rect x="728" y="330" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="1.5"/>
+    <text x="762" y="345">Fuse+Add</text>
+    <text x="762" y="358" class="small">72ch</text>
+  </g>
+
+  <line x1="715" y1="119" x2="727" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <line x1="715" y1="229" x2="727" y2="229" class="arrow" stroke="#f472b6" marker-end="url(#arrow-b2)"/>
+  <line x1="715" y1="349" x2="727" y2="349" class="arrow" stroke="#fb923c" marker-end="url(#arrow-b3)"/>
+
+  <!-- Cross fuses stage3 (dashed) -->
+  <path d="M715,119 L720,119 L720,200 L727,200" fill="none" stroke="#f472b6" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+  <path d="M715,119 L722,119 L722,320 L727,320" fill="none" stroke="#fb923c" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+  <path d="M715,229 L719,229 L719,138 L727,138" fill="none" stroke="#60a5fa" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+  <path d="M715,229 L721,229 L721,320 L727,320" fill="none" stroke="#fb923c" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+  <path d="M715,349 L718,349 L718,138 L727,138" fill="none" stroke="#60a5fa" stroke-width="1" stroke-dasharray="3,3" opacity="0.35"/>
+  <path d="M715,349 L720,349 L720,248 L727,248" fill="none" stroke="#f472b6" stroke-width="1" stroke-dasharray="3,3" opacity="0.35"/>
+
+  <!-- ======= TRANSITION to Stage 4 ======= -->
+  <g class="node">
+    <rect x="810" y="440" width="72" height="38" fill="#1a0a2a" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="846" y="455">Conv 3×3</text>
+    <text x="846" y="468" class="small">144ch, /2</text>
+  </g>
+  <path d="M762,368 L762,400 L796,400 L796,459 L809,459" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrow-b4)"/>
+
+  <!-- ======= STAGE 4 ======= -->
+  <!-- Branch 1 -->
+  <g class="node">
+    <rect x="895" y="100" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="934" y="115">Res ×2</text>
+    <text x="934" y="128" class="small">18ch</text>
+  </g>
+  <!-- Branch 2 -->
+  <g class="node">
+    <rect x="895" y="210" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="934" y="225">Res ×2</text>
+    <text x="934" y="238" class="small">36ch</text>
+  </g>
+  <!-- Branch 3 -->
+  <g class="node">
+    <rect x="895" y="330" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="934" y="345">Res ×2</text>
+    <text x="934" y="358" class="small">72ch</text>
+  </g>
+  <!-- Branch 4 -->
+  <g class="node">
+    <rect x="895" y="440" width="78" height="38" fill="#1e1e2e" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="934" y="455">Res ×2</text>
+    <text x="934" y="468" class="small">144ch</text>
+  </g>
+
+  <line x1="796" y1="119" x2="894" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <line x1="796" y1="229" x2="894" y2="229" class="arrow" stroke="#f472b6" marker-end="url(#arrow-b2)"/>
+  <line x1="796" y1="349" x2="894" y2="349" class="arrow" stroke="#fb923c" marker-end="url(#arrow-b3)"/>
+  <line x1="882" y1="459" x2="894" y2="459" class="arrow" stroke="#a78bfa" marker-end="url(#arrow-b4)"/>
+
+  <!-- Stage 4 Fusion (output) -->
+  <g class="node">
+    <rect x="986" y="100" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="2"/>
+    <text x="1020" y="115">Fuse+Add</text>
+    <text x="1020" y="128" class="small">18ch</text>
+  </g>
+  <g class="node">
+    <rect x="986" y="210" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="2"/>
+    <text x="1020" y="225">Fuse+Add</text>
+    <text x="1020" y="238" class="small">36ch</text>
+  </g>
+  <g class="node">
+    <rect x="986" y="330" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="2"/>
+    <text x="1020" y="345">Fuse+Add</text>
+    <text x="1020" y="358" class="small">72ch</text>
+  </g>
+  <g class="node">
+    <rect x="986" y="440" width="68" height="38" fill="#2a2a10" stroke="#facc15" stroke-width="2"/>
+    <text x="1020" y="455">Fuse+Add</text>
+    <text x="1020" y="468" class="small">144ch</text>
+  </g>
+
+  <line x1="973" y1="119" x2="985" y2="119" class="arrow" stroke="#60a5fa" marker-end="url(#arrow-b1)"/>
+  <line x1="973" y1="229" x2="985" y2="229" class="arrow" stroke="#f472b6" marker-end="url(#arrow-b2)"/>
+  <line x1="973" y1="349" x2="985" y2="349" class="arrow" stroke="#fb923c" marker-end="url(#arrow-b3)"/>
+  <line x1="973" y1="459" x2="985" y2="459" class="arrow" stroke="#a78bfa" marker-end="url(#arrow-b4)"/>
+
+  <!-- Cross fuses stage4 (all branch combinations, abbreviated) -->
+  <path d="M973,119 L978,119 L978,200 L985,200" fill="none" stroke="#f472b6" stroke-width="1" stroke-dasharray="3,3" opacity="0.35"/>
+  <path d="M973,119 L979,119 L979,320 L985,320" fill="none" stroke="#fb923c" stroke-width="1" stroke-dasharray="3,3" opacity="0.3"/>
+  <path d="M973,119 L980,119 L980,430 L985,430" fill="none" stroke="#a78bfa" stroke-width="1" stroke-dasharray="3,3" opacity="0.28"/>
+  <path d="M973,229 L977,229 L977,138 L985,138" fill="none" stroke="#60a5fa" stroke-width="1" stroke-dasharray="3,3" opacity="0.35"/>
+  <path d="M973,229 L979,229 L979,320 L985,320" fill="none" stroke="#fb923c" stroke-width="1" stroke-dasharray="3,3" opacity="0.3"/>
+  <path d="M973,229 L980,229 L980,430 L985,430" fill="none" stroke="#a78bfa" stroke-width="1" stroke-dasharray="3,3" opacity="0.28"/>
+  <path d="M973,349 L977,349 L977,138 L985,138" fill="none" stroke="#60a5fa" stroke-width="1" stroke-dasharray="3,3" opacity="0.3"/>
+  <path d="M973,349 L978,349 L978,248 L985,248" fill="none" stroke="#f472b6" stroke-width="1" stroke-dasharray="3,3" opacity="0.28"/>
+  <path d="M973,349 L980,349 L980,430 L985,430" fill="none" stroke="#a78bfa" stroke-width="1" stroke-dasharray="3,3" opacity="0.28"/>
+  <path d="M973,459 L977,459 L977,138 L985,138" fill="none" stroke="#60a5fa" stroke-width="1" stroke-dasharray="3,3" opacity="0.28"/>
+  <path d="M973,459 L978,459 L978,248 L985,248" fill="none" stroke="#f472b6" stroke-width="1" stroke-dasharray="3,3" opacity="0.25"/>
+  <path d="M973,459 L979,459 L979,368 L985,368" fill="none" stroke="#fb923c" stroke-width="1" stroke-dasharray="3,3" opacity="0.25"/>
+
+  <!-- ======= OUTPUT LABELS ======= -->
+  <text x="1065" y="122" font-family="Space Mono" font-size="9" fill="#60a5fa">x1 · H/4  · 18ch</text>
+  <text x="1065" y="232" font-family="Space Mono" font-size="9" fill="#f472b6">x2 · H/8  · 36ch</text>
+  <text x="1065" y="352" font-family="Space Mono" font-size="9" fill="#fb923c">x3 · H/16 · 72ch</text>
+  <text x="1065" y="462" font-family="Space Mono" font-size="9" fill="#a78bfa">x4 · H/32 · 144ch</text>
+
+  <!-- Vertical lines separating stages -->
+  <line x1="140" y1="30" x2="140" y2="500" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  <line x1="280" y1="30" x2="280" y2="500" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  <line x1="455" y1="30" x2="455" y2="500" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  <line x1="628" y1="30" x2="628" y2="500" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  <line x1="795" y1="30" x2="795" y2="500" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  <line x1="982" y1="30" x2="982" y2="500" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+
+  <!-- Residual block detail inset -->
+  <rect x="30" y="490" width="540" height="58" rx="4" fill="#111118" stroke="#1e1e2e" stroke-width="1"/>
+  <text x="46" y="507" font-family="Syne, sans-serif" font-size="9" fill="rgba(255,255,255,0.4)" letter-spacing="2">RESIDUAL BLOCK DETAIL</text>
+  <text x="46" y="525" font-family="Space Mono" font-size="8" fill="rgba(255,255,255,0.55)">Input → Conv3×3 → BN → ReLU → Conv3×3 → BN → (proj if ch≠) → Add → ReLU → Output</text>
+  <text x="46" y="540" font-family="Space Mono" font-size="8" fill="rgba(255,255,255,0.3)">Shortcut: 1×1 Conv+BN if input channels ≠ output channels</text>
+
+  <!-- Fusion detail inset -->
+  <rect x="590" y="490" width="460" height="58" rx="4" fill="#111118" stroke="#1e1e2e" stroke-width="1"/>
+  <text x="606" y="507" font-family="Syne, sans-serif" font-size="9" fill="rgba(255,255,255,0.4)" letter-spacing="2">FUSION DETAIL</text>
+  <text x="606" y="525" font-family="Space Mono" font-size="8" fill="rgba(255,255,255,0.55)">Higher res → Upsample(2×) → Conv1×1 → BN  (per resolution step up)</text>
+  <text x="606" y="540" font-family="Space Mono" font-size="8" fill="rgba(255,255,255,0.3)">Lower res → Conv3×3 stride 2 → BN → ReLU  (per resolution step down) → Sum All → ReLU</text>
+</svg>
+</div>
+
+</body>
+</html>
