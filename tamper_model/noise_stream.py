@@ -1,4 +1,7 @@
-class BayarConv(tf.keras.layers.Layer):
+import tensorflow as tf
+
+
+class BayarConv(tf.keras.layers.Layer): # type: ignore
     def __init__(self, filters=3, kernel_size=5):
         super(BayarConv, self).__init__()
         self.filters = filters
@@ -17,15 +20,30 @@ class BayarConv(tf.keras.layers.Layer):
     def call(self, x):
         k = self.kernel_size
         center = k // 2
+        in_channels = tf.shape(self.w)[2]
+        out_channels = tf.shape(self.w)[3]
+        num_updates = in_channels * out_channels
+        in_idx, out_idx = tf.meshgrid(
+            tf.range(in_channels),
+            tf.range(out_channels),
+            indexing='ij'
+        )
+        center_indices = tf.stack(
+            [
+                tf.fill([num_updates], center),
+                tf.fill([num_updates], center),
+                tf.reshape(in_idx, [-1]),
+                tf.reshape(out_idx, [-1])
+            ],
+            axis=1
+        )
         
         # Create mask to zero-out center during normalization
         mask = tf.ones_like(self.w)
         mask = tf.tensor_scatter_nd_update(
             mask,
-            indices=[[center, center, i, j]
-                     for i in range(self.w.shape[2])
-                     for j in range(self.w.shape[3])],
-            updates=tf.zeros([self.w.shape[2]*self.w.shape[3]])
+            indices=center_indices,
+            updates=tf.zeros([num_updates], dtype=self.w.dtype)
         )
         
         # Apply mask (remove center weight temporarily)
@@ -39,12 +57,45 @@ class BayarConv(tf.keras.layers.Layer):
         center_kernel = tf.zeros_like(w_normalized)
         center_kernel = tf.tensor_scatter_nd_update(
             center_kernel,
-            indices=[[center, center, i, j]
-                     for i in range(w_normalized.shape[2])
-                     for j in range(w_normalized.shape[3])],
-            updates=tf.fill([w_normalized.shape[2]*w_normalized.shape[3]], -1.0)
+            indices=center_indices,
+            updates=tf.fill([num_updates], tf.cast(-1.0, w_normalized.dtype))
         )
         
         final_kernel = w_normalized + center_kernel
         
-        return tf.nn.conv2d(x, final_kernel, strides=1, padding='SAME') # type: ignore
+        return tf.nn.conv2d(x, final_kernel, strides=1, padding='SAME') 
+    
+    
+    
+def noise_backbone(input_shape):
+    inputs = tf.keras.Input(shape=input_shape)
+
+        # BayarConv preprocessing
+    x = BayarConv(filters=3)(inputs)
+
+        # Feature extraction (no pooling)
+    x1 = tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu')(x)
+
+    x2 = tf.keras.layers.Conv2D(
+            128, 3, strides=2, padding='same', activation='relu')(x1)
+
+    x3 = tf.keras.layers.Conv2D(
+            256, 3, strides=2, padding='same', activation='relu')(x2)
+
+    x4 = tf.keras.layers.Conv2D(
+            512, 3, strides=2, padding='same', activation='relu')(x3)
+
+    return tf.keras.Model(inputs, [x1, x2, x3, x4])\
+        
+        
+def noise_branch_pipeline(image):
+
+    image = tf.cast(image, tf.float32) / 255.0
+
+    model = noise_backbone(image.shape[1:])
+    features = model(image)
+
+    return features
+
+
+
