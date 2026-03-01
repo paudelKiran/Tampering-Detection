@@ -46,7 +46,7 @@ def _fuse_to_target(branches, target_idx, target_filters, stage_name):
             for step in range(target_idx - source_idx):
                 step_filters = target_filters if step == (target_idx - source_idx - 1) else x.shape[-1]
                 x = tf.keras.layers.Conv2D(
-                    step_filters,
+                    step_filters, # pyright: ignore[reportArgumentType]
                     3,
                     strides=2,
                     padding='same',

@@ -24,7 +24,7 @@ def block_dct(channel):
     H = tf.shape(channel)[1]
     W = tf.shape(channel)[2]
 
-    channel = channel[:, :H - H % 8, :W - W % 8]
+    channel = channel[:, :H - H % 8, :W - W % 8] # pyright: ignore[reportOperatorIssue]
 
     patches = tf.image.extract_patches(
         images=tf.expand_dims(channel, -1),
