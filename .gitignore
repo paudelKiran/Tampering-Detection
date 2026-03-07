@@ -16,4 +16,4 @@ __pycache__/
 *.pyc
 dataset_arranged/
 manifests/
-segmentation_head.py/
+segmentation_head.py
