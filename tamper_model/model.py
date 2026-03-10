@@ -1,27 +1,3 @@
-"""
-Multistream Tampering Detection Model
-======================================
-
-Integrates three parallel feature extraction streams (texture, frequency, noise),
-performs multistream feature fusion, and outputs a pixel-level tampering
-segmentation mask via a U-Net style decoder.
-
-Pipeline:
-    Input Image (512x512x3)
-    ├─► Texture Stream   → [Dt1, Dt2, Dt3, Dt4]
-    ├─► Frequency Stream → [Df1, Df2, Df3, Df4]
-    └─► Noise Stream     → [Dn1, Dn2, Dn3, Dn4]
-         │
-         ▼
-    Multistream Feature Fusion → fused (64x64x256)
-         │
-         ▼
-    Segmentation Head (+ texture skip connections)
-         │
-         ▼
-    Tampering Mask (512x512x1)
-"""
-
 import tensorflow as tf
 
 try:
@@ -36,7 +12,6 @@ try:
     )
     from tamper_model.noise_stream import noise_backbone
     from tamper_model.feature_fusion import (
-        fuse_texture_frequency,
         fuse_noise,
         final_fusion,
     )
@@ -52,13 +27,10 @@ except ImportError:
         frequency_backbone_hrnet_w18,
     )
     from noise_stream import noise_backbone
-    from feature_fusion import fuse_texture_frequency, fuse_noise, final_fusion
+    from feature_fusion import fuse_noise, final_fusion
     from segmentation import segmentation_head
 
 
-# ---------------------------------------------------------------------------
-# Custom Keras layers (wrap raw TF ops for Keras 3 compatibility)
-# ---------------------------------------------------------------------------
 
 class FrequencyPreprocessLayer(tf.keras.layers.Layer):
     """DCT-based preprocessing: RGB → YCbCr → block DCT → binary volume."""
@@ -82,61 +54,42 @@ class FrequencyPreprocessLayer(tf.keras.layers.Layer):
         return binary_volume
 
 
-# ---------------------------------------------------------------------------
-# Multistream feature fusion
-# ---------------------------------------------------------------------------
+def multistream_feature_fusion(texture_feat, frequency_features, noise_features):
 
-def multistream_feature_fusion(texture_features, frequency_features, noise_features):
-    """
-    Fuse features from the three parallel streams.
-
-    Steps:
-        1. Align frequency feature spatial dimensions to match the texture stream.
-        2. Fuse texture + frequency via progressive upsampling.
-        3. Fuse noise features via progressive upsampling.
-        4. Cross-stream fusion of the two fused representations.
-        5. Downsample to the resolution expected by the segmentation head.
-
-    Args:
-        texture_features:   [Dt1, Dt2, Dt3, Dt4]  (256, 128, 64, 32 for 512 input)
-        frequency_features: List of 4 HRNet outputs from the DCT branch.
-        noise_features:     [Dn1, Dn2, Dn3, Dn4]  (512, 256, 128, 64 for 512 input)
-
-    Returns:
-        Fused feature tensor at 64x64 spatial resolution (for 512x512 input).
-    """
-    Dt1, Dt2, Dt3, Dt4 = texture_features
     Dn1, Dn2, Dn3, Dn4 = noise_features
 
-    # --- Align frequency features to texture spatial dimensions ---
-    # The DCT-based frequency stream operates on a smaller spatial grid;
-    # bilinear resize brings each scale to the matching texture resolution.
-    Df2 = tf.keras.layers.Resizing(
-        Dt2.shape[1], Dt2.shape[2], interpolation='bilinear',
-    )(frequency_features[0])
-    Df3 = tf.keras.layers.Resizing(
-        Dt3.shape[1], Dt3.shape[2], interpolation='bilinear',
-    )(frequency_features[1])
-    Df4 = tf.keras.layers.Resizing(
-        Dt4.shape[1], Dt4.shape[2], interpolation='bilinear',
-    )(frequency_features[2])
+    # Resize frequency features to match texture spatial dims
+    tex_h, tex_w = texture_feat.shape[1], texture_feat.shape[2]
+    freq_resized = [
+        tf.keras.layers.Resizing(
+            tex_h, tex_w, interpolation='bilinear',
+            name=f'freq_resize_{i}',
+        )(f)
+        for i, f in enumerate(frequency_features)
+    ]
+    freq_concat = tf.keras.layers.Concatenate(
+        axis=-1, name='freq_concat',
+    )(freq_resized)
 
-    # --- Texture–frequency fusion (output at Dt1 resolution, e.g. 256x256) ---
-    Dtf = fuse_texture_frequency(Dt1, Dt2, Dt3, Dt4, Df2, Df3, Df4)
+    # Fuse texture + frequency
+    Dtf = tf.keras.layers.Concatenate(
+        axis=-1, name='texture_freq_concat',
+    )([texture_feat, freq_concat])
+    Dtf = tf.keras.layers.Conv2D(
+        256, 3, padding='same', use_bias=False, name='texture_freq_proj',
+    )(Dtf)
+    Dtf = tf.keras.layers.BatchNormalization(name='texture_freq_bn')(Dtf)
+    Dtf = tf.keras.layers.ReLU(name='texture_freq_relu')(Dtf)
 
-    # --- Noise fusion (output at Dn1 resolution, e.g. 512x512) ---
+    # Fuse noise features
     Dn_fused = fuse_noise(Dn1, Dn2, Dn3, Dn4)
 
-    # --- Match spatial dimensions for cross-stream fusion ---
     Dn_matched = tf.keras.layers.Resizing(
         Dtf.shape[1], Dtf.shape[2], interpolation='bilinear',
     )(Dn_fused)
 
-    # --- Final cross-stream fusion (Conv2D 256 filters) ---
     fused = final_fusion(Dn_matched, Dtf)
 
-    # --- Downsample from 256x256 → 64x64 for segmentation head ---
-    # Two stride-2 convolutions: 256→128→64
     fused = tf.keras.layers.Conv2D(
         256, 3, strides=2, padding='same', use_bias=False,
         name='fusion_down1_conv',
@@ -154,69 +107,60 @@ def multistream_feature_fusion(texture_features, frequency_features, noise_featu
     return fused
 
 
-# ---------------------------------------------------------------------------
-# Model builder
-# ---------------------------------------------------------------------------
+
 
 def build_model(input_shape=(512, 512, 3)):
-    """
-    Build and compile the multistream tampering-detection model.
 
-    Architecture:
-        Input Image
-        → Texture Stream   (HRNet-W18)
-        → Frequency Stream  (DCT + HRNet-W18)
-        → Noise Stream      (BayarConv + CNN)
-        → Multistream Feature Fusion
-        → Segmentation Head (U-Net decoder with texture skip connections)
-        → Tampering Mask (sigmoid, same spatial size as input)
-
-    Returns:
-        Compiled ``tf.keras.Model`` with Adam optimiser and binary
-        cross-entropy loss.
-    """
     inputs = tf.keras.Input(shape=input_shape, name='input_image')
 
-    # ── Stream 1: Texture ──────────────────────────────────────────────
-    # Returns [Dt1 (256), Dt2 (128), Dt3 (64), Dt4 (32)]
-    texture_features = texture_stream(inputs)
 
-    # ── Stream 2: Frequency ────────────────────────────────────────────
-    # DCT preprocessing wrapped in a custom layer (Keras 3 compatible),
-    # then the HRNet-W18 backbone extracts multi-scale features.
+    texture_feat = texture_stream(inputs)  # (h/2, w/2, 256)
+
+  
     freq_preprocessed = FrequencyPreprocessLayer(
         name='frequency_preprocess',
     )(inputs)
     freq_backbone = frequency_backbone_hrnet_w18()
     frequency_features = freq_backbone(freq_preprocessed)
 
-    # ── Stream 3: Noise ────────────────────────────────────────────────
-    # Rescaling layer normalises to [0, 1], then BayarConv + CNN backbone.
+
     noise_normalized = tf.keras.layers.Rescaling(
         1.0 / 255.0, name='noise_rescale',
     )(inputs)
     noise_model = noise_backbone(noise_normalized.shape[1:])
     noise_features = noise_model(noise_normalized)
 
-    # ── Multistream Feature Fusion ─────────────────────────────────────
-    fused = multistream_feature_fusion(
-        texture_features, frequency_features, noise_features,
-    )
-    # fused shape: (batch, 64, 64, 256) for 512x512 input
 
-    # ── Segmentation Head ──────────────────────────────────────────────
-    # Texture features serve as encoder skip connections for the decoder.
-    # Expected spatial alignment with the segmentation head:
-    #   skip1 → Dt2 (128x128)   matched after 1st decoder upsample
-    #   skip2 → Dt3 ( 64x64)    matched at bottleneck upsample
-    #   skip3 → Dt4 ( 32x32)    matched at bottleneck after stride-2
-    Dt1, Dt2, Dt3, Dt4 = texture_features
-    encoder_features = [Dt2, Dt3, Dt4]
+    fused = multistream_feature_fusion(
+        texture_feat, frequency_features, noise_features,
+    )
+
+    # Generate multi-scale skip connections from texture feature
+    skip1 = tf.keras.layers.Conv2D(
+        64, 3, strides=2, padding='same', use_bias=False,
+        name='texture_skip1_conv',
+    )(texture_feat)
+    skip1 = tf.keras.layers.BatchNormalization(name='texture_skip1_bn')(skip1)
+    skip1 = tf.keras.layers.ReLU(name='texture_skip1_relu')(skip1)
+
+    skip2 = tf.keras.layers.Conv2D(
+        128, 3, strides=2, padding='same', use_bias=False,
+        name='texture_skip2_conv',
+    )(skip1)
+    skip2 = tf.keras.layers.BatchNormalization(name='texture_skip2_bn')(skip2)
+    skip2 = tf.keras.layers.ReLU(name='texture_skip2_relu')(skip2)
+
+    skip3 = tf.keras.layers.Conv2D(
+        256, 3, strides=2, padding='same', use_bias=False,
+        name='texture_skip3_conv',
+    )(skip2)
+    skip3 = tf.keras.layers.BatchNormalization(name='texture_skip3_bn')(skip3)
+    skip3 = tf.keras.layers.ReLU(name='texture_skip3_relu')(skip3)
+
+    encoder_features = [skip1, skip2, skip3]
 
     mask = segmentation_head(fused, encoder_features)
-    # mask shape: (batch, 512, 512, 1) — sigmoid activated
 
-    # ── Build & Compile ────────────────────────────────────────────────
     model = tf.keras.Model(
         inputs=inputs, outputs=mask, name='tampering_detection',
     )
@@ -228,10 +172,6 @@ def build_model(input_shape=(512, 512, 3)):
 
     return model
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
     model = build_model()
