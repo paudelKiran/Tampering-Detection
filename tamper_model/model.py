@@ -16,6 +16,13 @@ try:
         final_fusion,
     )
     from tamper_model.segmentation import segmentation_head
+    from tamper_model.classification import classification_head
+    from tamper_model.losses import (
+        segmentation_loss,
+        classification_loss,
+        dice_coefficient,
+        get_loss_functions,
+    )
 except ImportError:
     from texture_stream import texture_stream
     from frequenct_Stream import (
@@ -29,6 +36,13 @@ except ImportError:
     from noise_stream import noise_backbone
     from feature_fusion import fuse_noise, final_fusion
     from segmentation import segmentation_head
+    from classification import classification_head
+    from losses import (
+        segmentation_loss,
+        classification_loss,
+        dice_coefficient,
+        get_loss_functions,
+    )
 
 
 
@@ -161,13 +175,21 @@ def build_model(input_shape=(512, 512, 3)):
 
     mask = segmentation_head(fused, encoder_features)
 
+    # Image-level binary authenticity prediction
+    cls_output = classification_head(fused)
+
     model = tf.keras.Model(
-        inputs=inputs, outputs=mask, name='tampering_detection',
+        inputs=inputs,
+        outputs={'segmentation': mask, 'classification': cls_output},
+        name='tampering_detection',
     )
     model.compile(
         optimizer=tf.keras.optimizers.Adam(),
-        loss='binary_crossentropy',
-        metrics=['accuracy'],
+        loss=get_loss_functions(),
+        metrics={
+            'segmentation': [dice_coefficient, 'accuracy'],
+            'classification': ['accuracy'],
+        },
     )
 
     return model
