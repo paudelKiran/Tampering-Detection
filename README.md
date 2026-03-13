@@ -163,4 +163,4 @@ pip install -r requirements.txt
 from tamper_model.train import main
 main()
 ```
-# The `main()` function will execute the full training and evaluation pipeline, including data loading, model training, and metric reporting. Adjust hyperparameters and paths as needed for your specific dataset and environment.
+The `main()` function will execute the full training and evaluation pipeline, including data loading, model training, and metric reporting. Adjust hyperparameters and paths as needed for your specific dataset and environment.
