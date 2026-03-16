@@ -12,10 +12,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 MANIFEST_DIR = os.path.join(PROJECT_ROOT, "manifests")
 
 
-TRAIN_TAKE = 3
-VAL_TAKE = 2
-TEST_TAKE = 2
-EPOCHS = 2
+TRAIN_TAKE = 3359
+VAL_TAKE = 420
+TEST_TAKE = 421
+EPOCHS = 30
 LEARNING_RATE = 1e-4
 THRESHOLD = 0.5
 
@@ -30,10 +30,17 @@ def train_model(model, train_dataset, val_dataset):
 
     model.summary()
 
+    early_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=5,
+        restore_best_weights=True,
+    )
+
     history = model.fit(
         train_dataset,
         validation_data=val_dataset,
         epochs=EPOCHS,
+        callbacks=[early_stop],
     )
     return history
 
