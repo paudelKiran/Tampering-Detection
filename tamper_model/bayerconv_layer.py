@@ -2,8 +2,8 @@ import tensorflow as tf
 
 
 class BayarConv(tf.keras.layers.Layer): # type: ignore
-    def __init__(self, filters=3, kernel_size=5):
-        super(BayarConv, self).__init__()
+    def __init__(self, filters=3, kernel_size=5, **kwargs):
+        super(BayarConv, self).__init__(**kwargs)
         self.filters = filters
         self.kernel_size = kernel_size
 

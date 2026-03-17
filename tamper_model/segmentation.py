@@ -65,7 +65,8 @@ def segmentation_head(fused_features, encoder_features):
 
     
     tampering_mask = tf.keras.layers.Conv2D(
-        1, kernel_size=1, padding="same", activation="sigmoid"
+        1, kernel_size=1, padding="same", activation="sigmoid",
+        name="segmentation", dtype='float32'
     )(x)
 
     return tampering_mask

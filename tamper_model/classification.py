@@ -32,7 +32,7 @@ def classification_head(fused_features):
 
     # Binary output: probability that the image is tampered
     x = tf.keras.layers.Dense(
-        1, activation='sigmoid', name='cls_output',
+        1, activation='sigmoid', name='classification', dtype='float32',
     )(x)
 
     return x

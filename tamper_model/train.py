@@ -2,6 +2,9 @@ import os
 import numpy as np
 import tensorflow as tf
 
+# Enable mixed precision for ~2x speedup on Apple M4 GPU
+tf.keras.mixed_precision.set_global_policy('mixed_float16')
+
 from model import build_model  # type: ignore
 from dataloader import get_datasets
 from losses import dice_coefficient
@@ -12,11 +15,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 MANIFEST_DIR = os.path.join(PROJECT_ROOT, "manifests")
 CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, "checkpoints")
 
-EPOCHS = 20
-BATCH_SIZE = 4
+EPOCHS = 3
+BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
 THRESHOLD = 0.5
-TAKE_SAMPLES = 500   # images per epoch (125 batches × 20 epochs = 2500 steps)
 
 
 def get_callbacks():
@@ -31,14 +33,14 @@ def get_callbacks():
         ),
         tf.keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=8,
+            patience=2,
             restore_best_weights=True,
             verbose=1,
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,
-            patience=4,
+            patience=1,
             min_lr=1e-7,
             verbose=1,
         ),
@@ -50,7 +52,7 @@ def get_callbacks():
     return callbacks
 
 
-def train_model(model, train_dataset, val_dataset):
+def train_model(model, train_dataset, val_dataset, steps_per_epoch=None):
     """Train the model. build_model() already compiles it with per-output losses."""
 
     model.summary()
@@ -59,6 +61,7 @@ def train_model(model, train_dataset, val_dataset):
         train_dataset,
         validation_data=val_dataset,
         epochs=EPOCHS,
+        steps_per_epoch=steps_per_epoch,
         callbacks=get_callbacks(),
     )
     return history
@@ -113,24 +116,17 @@ def main():
         project_root=PROJECT_ROOT,
     )
 
-    # Limit train/val to ~300 images for fast iteration.
-    # test_dataset is NOT limited — evaluate on the full test split so
-    # both authentic and tampered images are included.  The manifest is
-    # sorted alphabetically (authentic first), so any take() from an
-    # unshuffled test dataset would sample only authentic images and
-    # produce all-zero ground-truth masks.
-    take_batches = TAKE_SAMPLES // BATCH_SIZE
-    train_dataset = train_dataset.take(take_batches)
-    val_dataset = val_dataset.take(take_batches)
-
-    print(f"Using {take_batches} batches for train/val (~{TAKE_SAMPLES} images)")
-    print("Evaluating on full test split.")
+    # Subsample training to ~20k samples to fit within 3-hour time budget.
+    # 20000 / 32 = 625 steps/epoch × 3 epochs ≈ 2.1 hrs + val ≈ 2.5-3 hrs.
+    MAX_TRAIN_STEPS = 625
+    print(f"Subsampling training to {MAX_TRAIN_STEPS} steps/epoch ({MAX_TRAIN_STEPS * BATCH_SIZE} samples).")
+    print(f"Training for max {EPOCHS} epochs.")
 
     print("Building model...")
     model = build_model()
 
     print("Training...")
-    train_model(model, train_dataset, val_dataset)
+    train_model(model, train_dataset, val_dataset, steps_per_epoch=MAX_TRAIN_STEPS)
 
     # Save final model
     final_path = os.path.join(CHECKPOINT_DIR, "final_model.keras")

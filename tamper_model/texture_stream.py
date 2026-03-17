@@ -32,6 +32,7 @@ class LocalAttentionLayer(tf.keras.layers.Layer):
         target_h = tf.shape(x)[1]
         target_w = tf.shape(x)[2]
         M1 = tf.image.resize(self.M_tensor, [target_h, target_w], method='bilinear')
+        M1 = tf.cast(M1, x.dtype)
         return x * M1
 
     def get_config(self):

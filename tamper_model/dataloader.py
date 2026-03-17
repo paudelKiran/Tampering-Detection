@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import tensorflow as tf
 
-IMG_SIZE = (512, 512)
+IMG_SIZE = (128, 128)
 AUTOTUNE = tf.data.AUTOTUNE
 
 
@@ -70,6 +70,9 @@ def build_dataset(image_paths, mask_paths, labels, batch_size, shuffle=False):
     ds = ds.map(parse_image_mask_label, num_parallel_calls=AUTOTUNE)
     ds = ds.batch(batch_size)
     ds = ds.prefetch(AUTOTUNE)
+    options = tf.data.Options()
+    options.experimental_optimization.map_parallelization = True
+    ds = ds.with_options(options)
     return ds
 
 

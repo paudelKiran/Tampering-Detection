@@ -16,3 +16,6 @@ __pycache__/
 *.pyc
 dataset_arranged/
 manifests/
+checkpoints/
+logs/
+evaluation_report/

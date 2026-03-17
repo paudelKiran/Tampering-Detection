@@ -123,7 +123,7 @@ def multistream_feature_fusion(texture_feat, frequency_features, noise_features)
 
 
 
-def build_model(input_shape=(512, 512, 3)):
+def build_model(input_shape=(128, 128, 3)):
 
     inputs = tf.keras.Input(shape=input_shape, name='input_image')
 
