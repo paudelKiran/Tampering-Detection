@@ -2,31 +2,56 @@ import os
 import numpy as np
 import tensorflow as tf
 
-from model import build_model # type: ignore
+from model import build_model  # type: ignore
 from dataloader import get_datasets
-from losses import combined_loss, dice_coefficient
+from losses import dice_coefficient
 from evaluation import TamperingEvaluation
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 MANIFEST_DIR = os.path.join(PROJECT_ROOT, "manifests")
+CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, "checkpoints")
 
-
-TRAIN_TAKE = 3
-VAL_TAKE = 2
-TEST_TAKE = 2
-EPOCHS = 2
+EPOCHS = 20
+BATCH_SIZE = 4
 LEARNING_RATE = 1e-4
 THRESHOLD = 0.5
+TAKE_SAMPLES = 500   # images per epoch (125 batches × 20 epochs = 2500 steps)
+
+
+def get_callbacks():
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+    callbacks = [
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(CHECKPOINT_DIR, "best_model.keras"),
+            monitor="val_loss",
+            save_best_only=True,
+            verbose=1,
+        ),
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_loss",
+            patience=8,
+            restore_best_weights=True,
+            verbose=1,
+        ),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.5,
+            patience=4,
+            min_lr=1e-7,
+            verbose=1,
+        ),
+        tf.keras.callbacks.TensorBoard(
+            log_dir=os.path.join(PROJECT_ROOT, "logs"),
+            histogram_freq=0,
+        ),
+    ]
+    return callbacks
 
 
 def train_model(model, train_dataset, val_dataset):
-
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
-        loss=combined_loss,
-        metrics=["accuracy", dice_coefficient],
-    )
+    """Train the model. build_model() already compiles it with per-output losses."""
 
     model.summary()
 
@@ -34,46 +59,84 @@ def train_model(model, train_dataset, val_dataset):
         train_dataset,
         validation_data=val_dataset,
         epochs=EPOCHS,
+        callbacks=get_callbacks(),
     )
     return history
 
 
 def evaluate_model(model, test_dataset):
+    """Evaluate segmentation and classification on the test set."""
 
-    all_y_true = []
-    all_y_prob = []
+    # Collect segmentation ground truths & predictions
+    seg_true_list = []
+    seg_prob_list = []
+    cls_true_list = []
+    cls_prob_list = []
 
-    for images, masks in test_dataset:
+    for images, targets in test_dataset:
         preds = model.predict(images, verbose=0)
-        all_y_true.append(masks.numpy())
-        all_y_prob.append(preds)
 
-    y_true = np.concatenate(all_y_true, axis=0).flatten()
-    y_prob = np.concatenate(all_y_prob, axis=0).flatten()
-    y_pred = (y_prob >= THRESHOLD).astype(np.float32)
+        seg_true_list.append(targets["segmentation"].numpy())
+        seg_prob_list.append(preds["segmentation"])
 
-    evaluator = TamperingEvaluation(y_true, y_pred, y_prob)
-    evaluator.print_all_metrics()
-    evaluator.plot_confusion_matrix()
-    evaluator.plot_roc()
+        cls_true_list.append(targets["classification"].numpy())
+        cls_prob_list.append(preds["classification"])
+
+    # --- Segmentation evaluation ---
+    seg_true = np.concatenate(seg_true_list, axis=0).flatten()
+    seg_prob = np.concatenate(seg_prob_list, axis=0).flatten()
+    seg_pred = (seg_prob >= THRESHOLD).astype(np.float32)
+
+    print("\n=== Segmentation Evaluation ===")
+    seg_eval = TamperingEvaluation(seg_true, seg_pred, seg_prob)
+    seg_eval.print_all_metrics()
+    seg_eval.plot_confusion_matrix()
+    seg_eval.plot_roc()
+
+    # --- Classification evaluation ---
+    cls_true = np.concatenate(cls_true_list, axis=0).flatten()
+    cls_prob = np.concatenate(cls_prob_list, axis=0).flatten()
+    cls_pred = (cls_prob >= THRESHOLD).astype(np.float32)
+
+    print("\n=== Classification Evaluation ===")
+    cls_eval = TamperingEvaluation(cls_true, cls_pred, cls_prob)
+    cls_eval.print_all_metrics()
+    cls_eval.plot_confusion_matrix()
+    cls_eval.plot_roc()
 
 
 def main():
     print("Loading datasets...")
     train_dataset, val_dataset, test_dataset = get_datasets(
-        manifest_dir=MANIFEST_DIR, project_root=PROJECT_ROOT
+        manifest_dir=MANIFEST_DIR,
+        batch_size=BATCH_SIZE,
+        project_root=PROJECT_ROOT,
     )
 
+    # Limit train/val to ~300 images for fast iteration.
+    # test_dataset is NOT limited — evaluate on the full test split so
+    # both authentic and tampered images are included.  The manifest is
+    # sorted alphabetically (authentic first), so any take() from an
+    # unshuffled test dataset would sample only authentic images and
+    # produce all-zero ground-truth masks.
+    take_batches = TAKE_SAMPLES // BATCH_SIZE
+    train_dataset = train_dataset.take(take_batches)
+    val_dataset = val_dataset.take(take_batches)
 
-    train_dataset = train_dataset.take(TRAIN_TAKE)
-    val_dataset = val_dataset.take(VAL_TAKE)
-    test_dataset = test_dataset.take(TEST_TAKE)
+    print(f"Using {take_batches} batches for train/val (~{TAKE_SAMPLES} images)")
+    print("Evaluating on full test split.")
 
     print("Building model...")
     model = build_model()
 
     print("Training...")
     train_model(model, train_dataset, val_dataset)
+
+    # Save final model
+    final_path = os.path.join(CHECKPOINT_DIR, "final_model.keras")
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    model.save(final_path)
+    print(f"Saved final model to {final_path}")
 
     print("Evaluating on test set...")
     evaluate_model(model, test_dataset)

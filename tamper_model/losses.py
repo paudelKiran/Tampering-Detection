@@ -5,6 +5,15 @@ import tensorflow as tf
 EPSILON = 1e-7
 SMOOTH = 1.0
 
+# Segmentation imbalance constants
+# Tampered pixels are ~11% of total → authentic/tampered ratio ≈ 8x
+# focal_alpha > 0.5  → up-weights the tampered (positive) class
+# focal_gamma        → down-weights easy background pixels
+# tversky_beta > 0.5 → penalises FN (missed tampered) more than FP
+SEG_FOCAL_ALPHA = 0.80
+SEG_FOCAL_GAMMA = 2.0
+SEG_TVERSKY_BETA = 0.70
+
 
 # ---------------------------------------------------------------------------
 # Dice loss & coefficient  (pixel-level overlap measure)
@@ -42,30 +51,56 @@ def dice_coefficient(y_true, y_pred):
 
 
 # ---------------------------------------------------------------------------
-# Segmentation loss  (BCE + Dice)
+# Focal loss  (replaces plain BCE — handles per-pixel class imbalance)
+# ---------------------------------------------------------------------------
+
+def focal_loss(y_true, y_pred):
+    """Alpha-balanced focal loss.
+
+    Down-weights the huge number of easy authentic pixels so the model is
+    forced to pay attention to the rare tampered pixels.
+    """
+    y_pred = tf.clip_by_value(y_pred, EPSILON, 1.0 - EPSILON)
+    y_true = tf.cast(y_true, tf.float32)
+
+    p_t     = y_true * y_pred + (1.0 - y_true) * (1.0 - y_pred)
+    alpha_t = y_true * SEG_FOCAL_ALPHA + (1.0 - y_true) * (1.0 - SEG_FOCAL_ALPHA)
+    loss    = -alpha_t * tf.pow(1.0 - p_t, SEG_FOCAL_GAMMA) * tf.math.log(p_t)
+    return tf.reduce_mean(loss)
+
+
+# ---------------------------------------------------------------------------
+# Tversky loss  (replaces plain Dice — penalises FN more than FP)
+# ---------------------------------------------------------------------------
+
+def tversky_loss(y_true, y_pred):
+    """Tversky loss with beta > 0.5 to penalise missed tampered pixels (FN)."""
+    y_pred   = tf.clip_by_value(y_pred, EPSILON, 1.0 - EPSILON)
+    y_true_f = tf.cast(tf.reshape(y_true, [-1]), tf.float32)
+    y_pred_f = tf.reshape(y_pred, [-1])
+
+    tp = tf.reduce_sum(y_true_f * y_pred_f)
+    fp = tf.reduce_sum((1.0 - y_true_f) * y_pred_f)
+    fn = tf.reduce_sum(y_true_f * (1.0 - y_pred_f))
+
+    alpha = 1.0 - SEG_TVERSKY_BETA   # weight for FP
+    tversky_index = (tp + SMOOTH) / (tp + alpha * fp + SEG_TVERSKY_BETA * fn + SMOOTH)
+    return 1.0 - tversky_index
+
+
+# ---------------------------------------------------------------------------
+# Segmentation loss  (Focal + Tversky)
 # ---------------------------------------------------------------------------
 
 def segmentation_loss(y_true, y_pred):
     """Pixel-level loss for the tampering mask.
 
-    Combines binary cross-entropy (strong gradient signal per pixel) with
-    Dice loss (global overlap signal that handles class imbalance well).
-
-    segmentation_loss = BCE + Dice
+    Focal loss handles the 8:1 pixel class imbalance (authentic vs tampered).
+    Tversky loss penalises missing tampered regions (high FN) more than FP.
+    This combination forces the model to actually detect tampered pixels
+    instead of collapsing to predicting everything as authentic.
     """
-
-    y_pred = tf.clip_by_value(y_pred, EPSILON, 1.0 - EPSILON)
-    y_true = tf.cast(y_true, tf.float32)
-
-    # Per-pixel binary cross-entropy, averaged over all pixels
-    bce = -(y_true * tf.math.log(y_pred)
-            + (1.0 - y_true) * tf.math.log(1.0 - y_pred))
-    bce = tf.reduce_mean(bce)
-
-    # Dice component for global spatial-overlap awareness
-    dice = dice_loss(y_true, y_pred)
-
-    return bce + dice
+    return focal_loss(y_true, y_pred) + tversky_loss(y_true, y_pred)
 
 
 # ---------------------------------------------------------------------------
